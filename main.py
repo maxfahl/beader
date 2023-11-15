@@ -7,7 +7,9 @@ import mimetypes
 import cv2
 from PIL.Image import Resampling
 from numpy import median
-from sklearn.neighbors import NearestNeighbors
+from collections import Counter
+import colour
+from sklearn.cluster import KMeans
 
 font_size = 8  # Adjust the size to fit your cells
 try:
@@ -16,34 +18,79 @@ except IOError:
     font = ImageFont.load_default()
 
 
+def delta_e_cie76(lab1, lab2):
+    return np.sqrt(np.sum((lab1 - lab2) ** 2, axis=-1))
+
+
 def rgb_to_lab(color):
     # Convert a single RGB color to LAB
-    return cv2.cvtColor(np.uint8([[color]]), cv2.COLOR_RGB2LAB)[0][0]
+    rgb = colour.sRGB_to_XYZ(color)
+    lab = colour.XYZ_to_Lab(rgb)
+    return lab
 
 
+from sklearn.cluster import KMeans
+
+
+def find_representative_colors(image, num_colors):
+    # Convert image to array of RGB values
+    image_array = np.array(image)
+    image_array = image_array.reshape((-1, 3))
+
+    # Use k-means clustering to find most representative colors
+    kmeans = KMeans(n_clusters=num_colors, n_init = 10)
+    labels = kmeans.fit_predict(image_array)
+
+    # Get the cluster centers (most representative colors)
+    centers = kmeans.cluster_centers_
+
+    # Count the labels to find the most common clusters
+    label_counts = np.bincount(labels)
+    # Sort the clusters by frequency
+    sorted_idx = np.argsort(label_counts)[::-1]  # Get indices of sorted clusters
+
+    # Arrange the cluster centers according to their frequency
+    sorted_centers = centers[sorted_idx]
+
+    # Convert to integers and tuples
+    sorted_centers = [tuple(int(value) for value in center) for center in sorted_centers]
+    return sorted_centers
+
+
+# And then modify the closest_color function to use this simpler delta E calculation
 def closest_color(target_color, colors_list):
-    # Convert the target and list colors to L*a*b* space
     target_lab = rgb_to_lab(target_color)
-    colors_lab = np.array([rgb_to_lab(list(color)) for color in colors_list])
-
-    # Use nearest neighbors in LAB space to find the closest color
-    neighbors = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(colors_lab)
-    distance, index = neighbors.kneighbors([target_lab])
-    return tuple(colors_list[index[0][0]])
+    colors_lab = np.array([rgb_to_lab(color) for color in colors_list])
+    distances = np.array([delta_e_cie76(target_lab, color_lab) for color_lab in colors_lab])
+    index = np.argmin(distances)
+    return tuple(colors_list[index])
 
 
-def create_bead_pattern(image_path, rows, columns, cell_size, contour_color, background_color, limit_colors):
-    # Load and convert the image
-    original_image = Image.open(image_path).convert('RGB')
+def find_most_common_colors(image, num_colors):
+    # Resize for faster processing, if the image is large
+    image.thumbnail((200, 200), Resampling.LANCZOS)
+    # Get colors from image and count them
+    colors = image.getdata()
+    color_counter = Counter(colors)
+    # Find the most common colors
+    most_common_colors = color_counter.most_common(num_colors)
+    # Extract the color values
+    most_common_colors = [color[0] for color in most_common_colors]
+    print(most_common_colors)
+    return most_common_colors
 
+
+def create_bead_pattern(original_image, rows, columns, cell_size, contour_color, background_color, limit_colors):
     # Resize the image to the desired grid size before edge detection
-    resized_image = original_image.resize((columns, rows), Resampling.BOX)
+    resized_image = original_image.resize((columns, rows), Resampling.BILINEAR)
     resized_image_array = np.array(resized_image)
 
-    # Convert the resized image to grayscale and apply a blur filter to reduce noise
-    gray_image = resized_image.convert('L').filter(ImageFilter.MedianFilter(size=3))
+    # Convert the resized image to grayscale and apply a Gaussian blur filter to reduce noise
+    gray_image = resized_image.convert('L').filter(ImageFilter.GaussianBlur(radius=2))
     gray_array = np.array(gray_image)
-    edges = cv2.Canny(gray_array, threshold1=50, threshold2=150)  # Adjusted thresholds
+
+    edges = cv2.Canny(gray_array, threshold1=75, threshold2=125)
+    # edges = cv2.dilate(edges, None)  # Dilate the edges to make them thicker
 
     # Create a new image for the pattern with the original dimensions
     pattern_image = Image.new('RGB', (columns * cell_size, rows * cell_size), background_color)
@@ -73,7 +120,7 @@ def create_bead_pattern(image_path, rows, columns, cell_size, contour_color, bac
             )
 
             # Position for the text will be at the top-left corner of the cell
-            text_position = (x * cell_size + 5, y * cell_size + 3)  # +2 for a small margin
+            text_position = (x * cell_size + 5, y * cell_size + 5)  # +2 for a small margin
 
             # Text to indicate COL:ROW
             cell_text = f"{x}"
@@ -95,8 +142,8 @@ def main():
     parser.add_argument('--cell_size', type=int, required=True, help="Size of each cell in the bead pattern")
     parser.add_argument('--background_color', type=str, required=True,
                         help="Background color of the bead pattern, e.g., 'white' or '#FFFFFF'")
-    parser.add_argument('--limit_colors', type=str, required=True,
-                        help="Comma-separated list of colors to use in the bead pattern, e.g., 'black,white'")
+    parser.add_argument('--num-colors', type=int, default=3,
+                        help="Number of unique colors to detect in the image. Default to 3 if not set.")
     parser.add_argument('--contour_color', type=str, default=None,  # Set default to None
                         help="Optional: Color of the contour in the bead pattern, e.g., 'black' or '#000000'")
 
@@ -106,7 +153,6 @@ def main():
     # Convert color arguments from string to RGB tuple
     contour_color = ImageColor.getrgb(args.contour_color) if args.contour_color else None
     background_color = ImageColor.getrgb(args.background_color)
-    limit_colors = [ImageColor.getrgb(color) for color in args.limit_colors.split(',')]
     processed_images = []
 
     for image_path in os.listdir("image/in"):
@@ -116,8 +162,17 @@ def main():
         # Check if the MIME type starts with 'image/'
         if mime_type and mime_type.startswith('image/'):
             full_path = f"image/in/{image_path}"
+            original_image = Image.open(full_path).convert('RGB')
+            most_common_colors = find_representative_colors(original_image, args.num_colors)
+
+            # If contour_color is set, add it to the list of limit_colors
+            limit_colors = most_common_colors
+            if args.contour_color:
+                contour_color = ImageColor.getrgb(args.contour_color)
+                limit_colors.append(contour_color)
+
             pattern_image = create_bead_pattern(
-                full_path,
+                original_image,
                 args.rows,
                 args.columns,
                 args.cell_size,
