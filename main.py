@@ -29,32 +29,27 @@ def rgb_to_lab(color):
     return lab
 
 
-from sklearn.cluster import KMeans
-
-
-def find_representative_colors(image, num_colors):
-    # Convert image to array of RGB values
+def find_representative_colors(image, num_colors, resize_width, resize_height, sample_size=None):
+    # Resize for faster processing
+    image = image.resize((resize_width, resize_height), Resampling.LANCZOS)
     image_array = np.array(image)
+
+    # If sample size is provided, randomly sample pixels from the image
+    if sample_size is not None and sample_size < image_array.shape[0]:
+        np.random.seed(0)  # For reproducibility
+        indices = np.random.choice(image_array.shape[0], sample_size, replace=False)
+        image_array = image_array[indices]
+
     image_array = image_array.reshape((-1, 3))
 
     # Use k-means clustering to find most representative colors
-    kmeans = KMeans(n_clusters=num_colors, n_init = 10)
-    labels = kmeans.fit_predict(image_array)
-
-    # Get the cluster centers (most representative colors)
+    kmeans = KMeans(n_clusters=num_colors, n_init=10)
+    kmeans.fit(image_array)
     centers = kmeans.cluster_centers_
 
-    # Count the labels to find the most common clusters
-    label_counts = np.bincount(labels)
-    # Sort the clusters by frequency
-    sorted_idx = np.argsort(label_counts)[::-1]  # Get indices of sorted clusters
-
-    # Arrange the cluster centers according to their frequency
-    sorted_centers = centers[sorted_idx]
-
     # Convert to integers and tuples
-    sorted_centers = [tuple(int(value) for value in center) for center in sorted_centers]
-    return sorted_centers
+    centers = [tuple(int(value) for value in center) for center in centers]
+    return centers
 
 
 # And then modify the closest_color function to use this simpler delta E calculation
@@ -146,12 +141,20 @@ def main():
                         help="Number of unique colors to detect in the image. Default to 3 if not set.")
     parser.add_argument('--contour_color', type=str, default=None,  # Set default to None
                         help="Optional: Color of the contour in the bead pattern, e.g., 'black' or '#000000'")
+    parser.add_argument('--resize-width', type=int, default=200,
+                        help="Width to resize the image to before processing, default is 200.")
+    parser.add_argument('--resize-height', type=int, default=200,
+                        help="Height to resize the image to before processing, default is 200.")
+    parser.add_argument('--sample-size', type=int, default=None,
+                        help="Optional number of pixels to sample for color analysis. If not set, use all pixels.")
 
-    # Parse arguments
+
+# Parse arguments
     args = parser.parse_args()
 
     # Convert color arguments from string to RGB tuple
     contour_color = ImageColor.getrgb(args.contour_color) if args.contour_color else None
+
     background_color = ImageColor.getrgb(args.background_color)
     processed_images = []
 
@@ -163,12 +166,19 @@ def main():
         if mime_type and mime_type.startswith('image/'):
             full_path = f"image/in/{image_path}"
             original_image = Image.open(full_path).convert('RGB')
-            most_common_colors = find_representative_colors(original_image, args.num_colors)
+
+            # most_common_colors = find_representative_colors(original_image, args.num_colors, exclude_color=contour_color)
+            most_common_colors = find_representative_colors(
+                original_image,
+                args.num_colors,
+                args.resize_width,
+                args.resize_height,
+                args.sample_size
+            )
 
             # If contour_color is set, add it to the list of limit_colors
             limit_colors = most_common_colors
-            if args.contour_color:
-                contour_color = ImageColor.getrgb(args.contour_color)
+            if contour_color:
                 limit_colors.append(contour_color)
 
             pattern_image = create_bead_pattern(
