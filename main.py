@@ -19,41 +19,92 @@ except IOError:
 
 
 def delta_e_cie76(lab1, lab2):
+    """
+    Calculates the color difference between two LAB color values using the CIE76 formula.
+
+    Parameters:
+        lab1 (ndarray): The first LAB color value.
+        lab2 (ndarray): The second LAB color value.
+
+    Returns:
+        float: The color difference between the two LAB color values.
+    """
     return np.sqrt(np.sum((lab1 - lab2) ** 2, axis=-1))
 
 
 def rgb_to_lab(color):
-    # Convert a single RGB color to LAB
+    """
+    Convert an RGB color to LAB color space.
+
+    Parameters:
+    color (tuple): A tuple representing the RGB color values.
+
+    Returns:
+    tuple: A tuple representing the LAB color values.
+    """
     rgb = colour.sRGB_to_XYZ(color)
     lab = colour.XYZ_to_Lab(rgb)
     return lab
 
 
-def find_representative_colors(image, num_colors, resize_width, resize_height, sample_size=None):
-    # Resize for faster processing
-    image = image.resize((resize_width, resize_height), Resampling.LANCZOS)
-    image_array = np.array(image)
+def resize_image(image, resize_width, resize_height):
+    """
+    Resize image for faster processing.
+    """
+    return image.resize((resize_width, resize_height), Resampling.LANCZOS)
 
-    # If sample size is provided, randomly sample pixels from the image
+def sample_pixels(image_array, sample_size):
+    """
+    Randomly sample pixels from the image.
+    """
     if sample_size is not None and sample_size < image_array.shape[0]:
         np.random.seed(0)  # For reproducibility
         indices = np.random.choice(image_array.shape[0], sample_size, replace=False)
         image_array = image_array[indices]
 
-    image_array = image_array.reshape((-1, 3))
+    return image_array.reshape((-1, 3))
 
-    # Use k-means clustering to find most representative colors
-    kmeans = KMeans(n_clusters=num_colors, n_init=10)
+def get_representative_colors(image_array, number_of_colors):
+    """
+    Use k-means clustering to find most representative colors.
+    """
+    kmeans = KMeans(n_clusters=number_of_colors, n_init=10)
     kmeans.fit(image_array)
     centers = kmeans.cluster_centers_
 
     # Convert to integers and tuples
     centers = [tuple(int(value) for value in center) for center in centers]
+
     return centers
+
+def find_representative_colors(image, number_of_colors, resize_width, resize_height, sample_size=None):
+    """
+    This function takes an image, number of representative colors to find, resize width and height,
+    and optionally a sample size. The function resizes the image, randomly samples pixels from the
+    resized image (if a sample size is provided), and then uses k-means clustering to find the
+    representative colors in the sampled pixels.
+
+    The function returns a list of tuples, where each tuple represents
+    a color in RGB format and each value in the tuple is an integer
+    between 0 and 255 inclusive.
+    """
+    resized_image = resize_image(image, resize_width, resize_height)
+    sampled_pixels = sample_pixels(np.array(resized_image), sample_size)
+    return get_representative_colors(sampled_pixels, number_of_colors)
 
 
 # And then modify the closest_color function to use this simpler delta E calculation
 def closest_color(target_color, colors_list):
+    """
+    Finds the closest color in a given list to a target color.
+
+    Parameters:
+    target_color (tuple): The target color in RGB format.
+    colors_list (list): A list of colors in RGB format.
+
+    Returns:
+    tuple: The closest color in the list to the target color.
+    """
     target_lab = rgb_to_lab(target_color)
     colors_lab = np.array([rgb_to_lab(color) for color in colors_list])
     distances = np.array([delta_e_cie76(target_lab, color_lab) for color_lab in colors_lab])
@@ -62,6 +113,16 @@ def closest_color(target_color, colors_list):
 
 
 def find_most_common_colors(image, num_colors):
+    """
+    Find the most common colors in an image.
+
+    Args:
+        image (PIL.Image.Image): The input image.
+        num_colors (int): The number of most common colors to find.
+
+    Returns:
+        list: A list of RGB tuples representing the most common colors.
+    """
     # Resize for faster processing, if the image is large
     image.thumbnail((200, 200), Resampling.LANCZOS)
     # Get colors from image and count them
@@ -76,6 +137,21 @@ def find_most_common_colors(image, num_colors):
 
 
 def create_bead_pattern(original_image, rows, columns, cell_size, contour_color, background_color, limit_colors):
+    """
+    Create a bead pattern image based on the original image.
+
+    Args:
+        original_image (PIL.Image.Image): The original image to create the pattern from.
+        rows (int): The number of rows in the pattern grid.
+        columns (int): The number of columns in the pattern grid.
+        cell_size (int): The size of each cell in the pattern grid.
+        contour_color (tuple or None): The color of the contour lines. If None, no contour lines will be drawn.
+        background_color (tuple): The background color of the pattern image.
+        limit_colors (list): A list of colors to limit the pattern to.
+
+    Returns:
+        PIL.Image.Image: The bead pattern image.
+    """
     # Resize the image to the desired grid size before edge detection
     resized_image = original_image.resize((columns, rows), Resampling.BILINEAR)
     resized_image_array = np.array(resized_image)
@@ -85,7 +161,6 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
     gray_array = np.array(gray_image)
 
     edges = cv2.Canny(gray_array, threshold1=75, threshold2=125)
-    # edges = cv2.dilate(edges, None)  # Dilate the edges to make them thicker
 
     # Create a new image for the pattern with the original dimensions
     pattern_image = Image.new('RGB', (columns * cell_size, rows * cell_size), background_color)
@@ -109,9 +184,7 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
             # Draw the cell
             draw.rectangle(
                 [x * cell_size, y * cell_size, (x + 1) * cell_size - 1, (y + 1) * cell_size - 1],
-                fill=fill_color,
-                # outline=contour_color if contour_color else ImageColor.getrgb('#000000'),
-                # width=1
+                fill=fill_color
             )
 
             # Position for the text will be at the top-left corner of the cell
