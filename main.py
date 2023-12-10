@@ -204,7 +204,7 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
 def main():
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Create a bead pattern from an image.")
-    # parser.add_argument('--image_path', type=str, required=True, help="Path to the input image file")
+    parser.add_argument('--image_path', type=str, required=True, help="Path to the input image file")
     parser.add_argument('--rows', type=int, required=True, help="Number of rows in the bead pattern")
     parser.add_argument('--columns', type=int, required=True, help="Number of columns in the bead pattern")
     parser.add_argument('--cell_size', type=int, required=True, help="Size of each cell in the bead pattern")
@@ -221,57 +221,57 @@ def main():
     parser.add_argument('--sample-size', type=int, default=None,
                         help="Optional number of pixels to sample for color analysis. If not set, use all pixels.")
 
-
-# Parse arguments
+    # Parse arguments
     args = parser.parse_args()
 
     # Convert color arguments from string to RGB tuple
     contour_color = ImageColor.getrgb(args.contour_color) if args.contour_color else None
-
     background_color = ImageColor.getrgb(args.background_color)
-    processed_images = []
 
-    for image_path in os.listdir("image/in"):
-        # Guess the type of the file based on its extension
-        mime_type, _ = mimetypes.guess_type(image_path)
+    # Load the image specified by the user
+    original_image = Image.open(args.image_path).convert('RGB')
 
-        # Check if the MIME type starts with 'image/'
-        if mime_type and mime_type.startswith('image/'):
-            full_path = f"image/in/{image_path}"
-            original_image = Image.open(full_path).convert('RGB')
+    # Find the representative colors
+    most_common_colors = find_representative_colors(
+        original_image,
+        args.num_colors,
+        args.resize_width,
+        args.resize_height,
+        args.sample_size
+    )
 
-            # most_common_colors = find_representative_colors(original_image, args.num_colors, exclude_color=contour_color)
-            most_common_colors = find_representative_colors(
-                original_image,
-                args.num_colors,
-                args.resize_width,
-                args.resize_height,
-                args.sample_size
-            )
+    # If contour_color is set, add it to the list of limit_colors
+    limit_colors = most_common_colors
+    if contour_color:
+        limit_colors.append(contour_color)
 
-            # If contour_color is set, add it to the list of limit_colors
-            limit_colors = most_common_colors
-            if contour_color:
-                limit_colors.append(contour_color)
+    # Create the bead pattern
+    pattern_image = create_bead_pattern(
+        original_image,
+        args.rows,
+        args.columns,
+        args.cell_size,
+        contour_color,
+        background_color,
+        limit_colors
+    )
 
-            pattern_image = create_bead_pattern(
-                original_image,
-                args.rows,
-                args.columns,
-                args.cell_size,
-                contour_color,
-                background_color,
-                limit_colors
-            )
-            current_date = datetime.now().strftime('%y%m%d%-H%M')
-            input_file_name = image_path.split('.')[0]
-            output_filename = f"image/out/{input_file_name}_{current_date}.png"
-            pattern_image.save(output_filename)
-            processed_images.append(input_file_name)
-            print(f"Pattern saved as {output_filename}")
+    # Save the pattern image
+    current_date = datetime.now().strftime('%y%m%d%-H%M')
+    input_file_name = os.path.basename(args.image_path).split('.')[0]
+    output_filename = f"image/out/{input_file_name}_{current_date}.png"
+    pattern_image.save(output_filename)
+    print(f"Pattern saved as {output_filename}")
 
-            # show image
-            pattern_image.show()
+    # Show the image
+    pattern_image.show()
+
+    # Print a message indicating the image that has been processed
+    print(f"Image processed: {args.image_path}")
+
+
+if __name__ == "__main__":
+    main()
 
     # Print a message containing all images that has been processed
     print(f"Images processed: {','.join([img_path for img_path in processed_images])}")
