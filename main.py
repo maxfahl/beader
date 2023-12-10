@@ -1,4 +1,5 @@
 from datetime import datetime
+from pickletools import float8
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont
 import argparse
@@ -47,16 +48,20 @@ def rgb_to_lab(color):
     return lab
 
 
-def resize_image(image, resize_width, resize_height):
+def resize_image(image, resize_ratio):
     """
-    Resize image for faster processing.
+    Resize image for faster processing while maintaining aspect ratio.
     """
-    return image.resize((resize_width, resize_height), Resampling.LANCZOS)
+    width, height = image.size
+    new_width = int(width * resize_ratio)
+    new_height = int(height * resize_ratio)
+    return image.resize((new_width, new_height), Resampling.LANCZOS)
 
 def sample_pixels(image_array, sample_size):
     """
     Randomly sample pixels from the image.
     """
+    print("Sampling pixels...")
     if sample_size is not None and sample_size < image_array.shape[0]:
         np.random.seed(0)  # For reproducibility
         indices = np.random.choice(image_array.shape[0], sample_size, replace=False)
@@ -68,16 +73,20 @@ def get_representative_colors(image_array, number_of_colors):
     """
     Use k-means clustering to find most representative colors.
     """
+    print("Finding representative colors...")
     kmeans = KMeans(n_clusters=number_of_colors, n_init=10)
     kmeans.fit(image_array)
     centers = kmeans.cluster_centers_
 
     # Convert to integers and tuples
     centers = [tuple(int(value) for value in center) for center in centers]
+    
+    # Log the representative colors found
+    print(f"  Done: {centers}")
 
     return centers
 
-def find_representative_colors(image, number_of_colors, resize_width, resize_height, sample_size=None):
+def find_representative_colors(image, number_of_colors, resize_ratio, sample_size=None):
     """
     This function takes an image, number of representative colors to find, resize width and height,
     and optionally a sample size. The function resizes the image, randomly samples pixels from the
@@ -88,7 +97,8 @@ def find_representative_colors(image, number_of_colors, resize_width, resize_hei
     a color in RGB format and each value in the tuple is an integer
     between 0 and 255 inclusive.
     """
-    resized_image = resize_image(image, resize_width, resize_height)
+    print("Resizing the image...")
+    resized_image = resize_image(image, resize_ratio)
     sampled_pixels = sample_pixels(np.array(resized_image), sample_size)
     return get_representative_colors(sampled_pixels, number_of_colors)
 
@@ -132,7 +142,7 @@ def find_most_common_colors(image, num_colors):
     most_common_colors = color_counter.most_common(num_colors)
     # Extract the color values
     most_common_colors = [color[0] for color in most_common_colors]
-    print(most_common_colors)
+
     return most_common_colors
 
 
@@ -157,7 +167,7 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
     resized_image_array = np.array(resized_image)
 
     # Convert the resized image to grayscale and apply a Gaussian blur filter to reduce noise
-    gray_image = resized_image.convert('L').filter(ImageFilter.GaussianBlur(radius=2))
+    gray_image = resized_image.convert('L').filter(ImageFilter.GaussianBlur(radius=cell_size/4))
     gray_array = np.array(gray_image)
 
     edges = cv2.Canny(gray_array, threshold1=75, threshold2=125)
@@ -166,37 +176,34 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
     pattern_image = Image.new('RGB', (columns * cell_size, rows * cell_size), background_color)
     draw = ImageDraw.Draw(pattern_image)
 
-    # Draw the grid pattern
+        # Draw the grid pattern
     for y in range(rows):
         for x in range(columns):
-            # Get the median color for each resized cell
+            # Get the color for each resized cell
             cell = resized_image_array[y:y + 1, x:x + 1].reshape(-1, 3)
-            median_color = tuple(int(v) for v in median(cell, axis=0))
+
+            # Use k-means clustering to find the most representative color
+            kmeans = KMeans(n_clusters=1, n_init=10)
+            kmeans.fit(cell)
+            representative_color = tuple(int(value) for value in kmeans.cluster_centers_[0])
 
             # Choose the closest color from the limit_colors
-            closest_match = closest_color(median_color, limit_colors)
+            closest_match = closest_color(representative_color, limit_colors)
+
 
             if contour_color:
                 fill_color = contour_color if edges[y, x] != 0 else closest_match
             else:
                 fill_color = closest_match
 
-            # Draw the cell
+            # Convert fill_color to string representation of RGB color
+            fill_color_str = f"rgb{fill_color}"
+
+            # Draw the cell with a 1px border
             draw.rectangle(
-                [x * cell_size, y * cell_size, (x + 1) * cell_size - 1, (y + 1) * cell_size - 1],
-                fill=fill_color
+                (float(x * cell_size + 1), float(y * cell_size + 1), float((x + 1) * cell_size - 2), float((y + 1) * cell_size - 2)),
+                fill=fill_color_str
             )
-
-            # Position for the text will be at the top-left corner of the cell
-            text_position = (x * cell_size + 5, y * cell_size + 5)  # +2 for a small margin
-
-            # Text to indicate COL:ROW
-            cell_text = f"{x}"
-
-            # Draw the text with a thin black shadow
-            shadow_position = (text_position[0] + 1, text_position[1] + 1)
-            draw.text(shadow_position, cell_text, font=font, fill="black")
-            draw.text(text_position, cell_text, font=font, fill="white")
 
     return pattern_image
 
@@ -214,8 +221,8 @@ def main():
                         help="Number of unique colors to detect in the image. Default to 3 if not set.")
     parser.add_argument('--contour_color', type=str, default=None,  # Set default to None
                         help="Optional: Color of the contour in the bead pattern, e.g., 'black' or '#000000'")
-    parser.add_argument('--resize-width', type=int, default=200,
-                        help="Width to resize the image to before processing, default is 200.")
+    parser.add_argument('--resize-ratio', type=float, default=1,
+                        help="Ratio to resize the image by before processing. This can drastically increase the speed of processing. Default is 1 if not set.")
     parser.add_argument('--resize-height', type=int, default=200,
                         help="Height to resize the image to before processing, default is 200.")
     parser.add_argument('--sample-size', type=int, default=None,
@@ -228,6 +235,7 @@ def main():
     contour_color = ImageColor.getrgb(args.contour_color) if args.contour_color else None
     background_color = ImageColor.getrgb(args.background_color)
 
+    print("Loading the image...")
     # Load the image specified by the user
     original_image = Image.open(args.image_path).convert('RGB')
 
@@ -235,8 +243,7 @@ def main():
     most_common_colors = find_representative_colors(
         original_image,
         args.num_colors,
-        args.resize_width,
-        args.resize_height,
+        args.resize_ratio,
         args.sample_size
     )
 
@@ -245,6 +252,7 @@ def main():
     if contour_color:
         limit_colors.append(contour_color)
 
+    print("Creating the bead pattern...")
     # Create the bead pattern
     pattern_image = create_bead_pattern(
         original_image,
@@ -256,6 +264,7 @@ def main():
         limit_colors
     )
 
+    print("Saving the pattern image...")
     # Save the pattern image
     current_date = datetime.now().strftime('%y%m%d%-H%M')
     input_file_name = os.path.basename(args.image_path).split('.')[0]
@@ -268,13 +277,6 @@ def main():
 
     # Print a message indicating the image that has been processed
     print(f"Image processed: {args.image_path}")
-
-
-if __name__ == "__main__":
-    main()
-
-    # Print a message containing all images that has been processed
-    print(f"Images processed: {','.join([img_path for img_path in processed_images])}")
 
 
 if __name__ == "__main__":
