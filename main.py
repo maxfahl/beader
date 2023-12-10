@@ -1,13 +1,10 @@
 from datetime import datetime
-from pickletools import float8
 import numpy as np
-from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageColor, ImageDraw, ImageFont
+from PIL.Image import Resampling
 import argparse
 import os
-import mimetypes
 import cv2
-from PIL.Image import Resampling
-from numpy import median
 from collections import Counter
 import colour
 from sklearn.cluster import KMeans
