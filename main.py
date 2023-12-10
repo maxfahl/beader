@@ -69,24 +69,35 @@ def sample_pixels(image_array, sample_size):
 
     return image_array.reshape((-1, 3))
 
-def get_representative_colors(image_array, number_of_colors):
+def get_representative_colors(image_array, number_of_colors, ignore_colors):
     """
     Use k-means clustering to find most representative colors.
     """
     print("Finding representative colors...")
-    kmeans = KMeans(n_clusters=number_of_colors, n_init=10)
-    kmeans.fit(image_array)
-    centers = kmeans.cluster_centers_
+    ignore_labs = [rgb_to_lab(color) for color in ignore_colors] if ignore_colors else []
+    color_difference_threshold = 10.0  # Adjust this value as needed
 
-    # Convert to integers and tuples
-    centers = [tuple(int(value) for value in center) for center in centers]
-    
+
+    while True:
+        kmeans = KMeans(n_clusters=number_of_colors, n_init=10)
+        kmeans.fit(image_array)
+        centers = kmeans.cluster_centers_
+
+        # Convert to integers and tuples
+        centers = [tuple(int(value) for value in center) for center in centers]
+
+        # Remove colors that are too close to contour_color or background_color
+        centers = [color for color in centers if all(delta_e_cie76(rgb_to_lab(color), ignore_lab) > color_difference_threshold for ignore_lab in ignore_labs)]
+
+        if len(centers) >= number_of_colors:
+            break
+
     # Log the representative colors found
     print(f"  Done: {centers}")
 
     return centers
 
-def find_representative_colors(image, number_of_colors, resize_ratio, sample_size=None):
+def find_representative_colors(image, number_of_colors, resize_ratio, sample_size=None, ignore_colors=None):
     """
     This function takes an image, number of representative colors to find, resize width and height,
     and optionally a sample size. The function resizes the image, randomly samples pixels from the
@@ -100,7 +111,7 @@ def find_representative_colors(image, number_of_colors, resize_ratio, sample_siz
     print("Resizing the image...")
     resized_image = resize_image(image, resize_ratio)
     sampled_pixels = sample_pixels(np.array(resized_image), sample_size)
-    return get_representative_colors(sampled_pixels, number_of_colors)
+    return get_representative_colors(sampled_pixels, number_of_colors, ignore_colors)
 
 
 # And then modify the closest_color function to use this simpler delta E calculation
@@ -166,17 +177,17 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
     resized_image = original_image.resize((columns, rows), Resampling.BILINEAR)
     resized_image_array = np.array(resized_image)
 
-    # Convert the resized image to grayscale and apply a Gaussian blur filter to reduce noise
-    gray_image = resized_image.convert('L').filter(ImageFilter.GaussianBlur(radius=cell_size/4))
+    # Convert the resized image to grayscale
+    gray_image = resized_image.convert('L')
     gray_array = np.array(gray_image)
 
-    edges = cv2.Canny(gray_array, threshold1=75, threshold2=125)
+    edges = cv2.Canny(gray_array, threshold1=3, threshold2=50)
 
     # Create a new image for the pattern with the original dimensions
     pattern_image = Image.new('RGB', (columns * cell_size, rows * cell_size), background_color)
     draw = ImageDraw.Draw(pattern_image)
 
-        # Draw the grid pattern
+    # Draw the grid pattern
     for y in range(rows):
         for x in range(columns):
             # Get the color for each resized cell
@@ -189,7 +200,6 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
 
             # Choose the closest color from the limit_colors
             closest_match = closest_color(representative_color, limit_colors)
-
 
             if contour_color:
                 fill_color = contour_color if edges[y, x] != 0 else closest_match
@@ -211,15 +221,15 @@ def create_bead_pattern(original_image, rows, columns, cell_size, contour_color,
 def main():
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Create a bead pattern from an image.")
-    parser.add_argument('--image_path', type=str, required=True, help="Path to the input image file")
+    parser.add_argument('--image-path', type=str, required=True, help="Path to the input image file")
     parser.add_argument('--rows', type=int, required=True, help="Number of rows in the bead pattern")
     parser.add_argument('--columns', type=int, required=True, help="Number of columns in the bead pattern")
-    parser.add_argument('--cell_size', type=int, required=True, help="Size of each cell in the bead pattern")
-    parser.add_argument('--background_color', type=str, required=True,
+    parser.add_argument('--cell-size', type=int, required=True, help="Size of each cell in the bead pattern")
+    parser.add_argument('--background-color', type=str, required=True,
                         help="Background color of the bead pattern, e.g., 'white' or '#FFFFFF'")
     parser.add_argument('--num-colors', type=int, default=3,
                         help="Number of unique colors to detect in the image. Default to 3 if not set.")
-    parser.add_argument('--contour_color', type=str, default=None,  # Set default to None
+    parser.add_argument('--contour-color', type=str, default=None,  # Set default to None
                         help="Optional: Color of the contour in the bead pattern, e.g., 'black' or '#000000'")
     parser.add_argument('--resize-ratio', type=float, default=1,
                         help="Ratio to resize the image by before processing. This can drastically increase the speed of processing. Default is 1 if not set.")
@@ -227,6 +237,9 @@ def main():
                         help="Height to resize the image to before processing, default is 200.")
     parser.add_argument('--sample-size', type=int, default=None,
                         help="Optional number of pixels to sample for color analysis. If not set, use all pixels.")
+    # In the argument parsing section of the main function
+    parser.add_argument('--ignore-colors', type=str, default=None,
+                    help="Optional: Colors to ignore in the bead pattern, e.g., 'black,white' or '#000000,#FFFFFF'")
 
     # Parse arguments
     args = parser.parse_args()
@@ -234,23 +247,24 @@ def main():
     # Convert color arguments from string to RGB tuple
     contour_color = ImageColor.getrgb(args.contour_color) if args.contour_color else None
     background_color = ImageColor.getrgb(args.background_color)
+    ignore_colors = [ImageColor.getrgb(color) for color in args.ignore_colors.split(',')] if args.ignore_colors else []
+    ignore_colors.append(background_color)
+    if contour_color:
+        ignore_colors.append(contour_color)
+
 
     print("Loading the image...")
     # Load the image specified by the user
     original_image = Image.open(args.image_path).convert('RGB')
 
     # Find the representative colors
-    most_common_colors = find_representative_colors(
+    limit_colors = find_representative_colors(
         original_image,
         args.num_colors,
         args.resize_ratio,
-        args.sample_size
+        args.sample_size,
+        ignore_colors
     )
-
-    # If contour_color is set, add it to the list of limit_colors
-    limit_colors = most_common_colors
-    if contour_color:
-        limit_colors.append(contour_color)
 
     print("Creating the bead pattern...")
     # Create the bead pattern
