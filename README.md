@@ -34,13 +34,14 @@ python main.py --image-path <path> --rows <rows> --columns <columns> --cell-size
 | `--image-path`        | The path to the image to be processed.                                      |
 | `--rows`              | Number of rows in the bead pattern                                          |
 | `--columns`           | Number of columns in the bead pattern                                       |
-| `--cell-size`         | Size of each cell in the bead pattern                                       |
-| `--background-color`  | Background color of the bead pattern                                        |
-| `--num-colors`        | Number of unique colors to detect in the image                              |
-| `--contour-color`     | Color of the contour lines in the bead pattern                              |
-| `--resize-width`      | Width to resize the image to before processing                              |
-| `--resize-height`     | Height to resize the image to before processing                             |
-| `--sample-size`       | Size of the sample to take from the image for color analysis (optional)     |
+| `--cell-size`         | Optional: Size of each cell in the bead pattern                             |
+| `--background-color`  | Optional: Background color of the bead pattern                              |
+| `--num-colors`        | Optional: Number of unique colors to detect in the image                    |
+| `--contour-color`     | Optional: Color of the contour lines in the bead pattern                    |
+| `--resize-width`      | Optional: Width to resize the image to before processing                    |
+| `--resize-height`     | Optional: Height to resize the image to before processing                   |
+| `--sample-size`       | Optional: Size of the sample to take from the image for color analysis      |
+| `--ignore-colors`     | Optional: Colors to ignore in the bead pattern, e.g., 'black,white' or '#000000,#FFFFFF' |
 
 ## Dependencies
 

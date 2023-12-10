@@ -224,10 +224,10 @@ def main():
     parser.add_argument('--image-path', type=str, required=True, help="Path to the input image file")
     parser.add_argument('--rows', type=int, required=True, help="Number of rows in the bead pattern")
     parser.add_argument('--columns', type=int, required=True, help="Number of columns in the bead pattern")
-    parser.add_argument('--cell-size', type=int, required=True, help="Size of each cell in the bead pattern")
-    parser.add_argument('--background-color', type=str, required=True,
+    parser.add_argument('--cell-size', type=int, default=40, help="Size of each cell in the bead pattern")
+    parser.add_argument('--background-color', type=str, default="#FFFFFF",
                         help="Background color of the bead pattern, e.g., 'white' or '#FFFFFF'")
-    parser.add_argument('--num-colors', type=int, default=3,
+    parser.add_argument('--num-colors', type=int, default=5,
                         help="Number of unique colors to detect in the image. Default to 3 if not set.")
     parser.add_argument('--contour-color', type=str, default=None,  # Set default to None
                         help="Optional: Color of the contour in the bead pattern, e.g., 'black' or '#000000'")
